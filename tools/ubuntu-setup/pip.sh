@@ -20,5 +20,5 @@ set -e
 set -x
 
 sudo apt-get install -y python-pip
-sudo pip install argcomplete
-sudo pip install couchdb
+sudo -E pip install argcomplete
+sudo -E pip install couchdb

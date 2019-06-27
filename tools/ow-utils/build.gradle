@@ -17,7 +17,10 @@
 
 ext.dockerImageName = 'ow-utils'
 apply from: '../../gradle/docker.gradle'
-
+ext.dockerBuildArgs = [
+    "HTTP_PROXY=http://sysproxy.wal-mart.com:8080",
+    "HTTPS_PROXY=http://sysproxy.wal-mart.com:8080"
+]
 distDocker.dependsOn 'copyWskadmin'
 distDocker.finalizedBy('cleanup')
 

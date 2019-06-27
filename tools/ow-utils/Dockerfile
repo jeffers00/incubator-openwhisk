@@ -6,6 +6,8 @@ FROM adoptopenjdk/openjdk8:jdk8u191-b12
 ENV DOCKER_VERSION 1.12.0
 ENV WHISK_CLI_VERSION latest
 ENV WHISKDEPLOY_CLI_VERSION latest
+ENV http_proxy 'http://sysproxy.wal-mart.com:8080'
+ENV https_proxy 'http://sysproxy.wal-mart.com:8080'
 
 RUN apt-get update && apt-get install -y \
   git \

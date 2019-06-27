@@ -21,8 +21,8 @@ set -x
 
 export DEBIAN_FRONTEND=noninteractive
 
-sudo apt-get update -y
-sudo apt-get install -y ntp git zip tzdata lsb-release
+sudo -E apt-get update -y
+sudo -E apt-get install -y ntp git zip tzdata lsb-release
 
 echo "Etc/UTC" | sudo tee /etc/timezone
 sudo dpkg-reconfigure --frontend noninteractive tzdata
