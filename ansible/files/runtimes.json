@@ -92,6 +92,26 @@
                     "attachmentName": "codefile",
                     "attachmentType": "text/plain"
                 }
+            },
+            {
+                "kind": "python:converse",
+                "default": false,
+                "image": {
+                    "prefix": "jeffers00",
+                    "name": "python_for_converse_ow_test",
+                    "tag": "latest"
+                },
+                "deprecated": false,
+                "attached": {
+                    "attachmentName": "codefile",
+                    "attachmentType": "text/plain"
+                },
+                "stemCells": [
+                    {
+                        "count": 1,
+                        "memory": "256 MB"
+                    }
+                ]
             }
         ],
         "swift": [
@@ -124,6 +144,12 @@
                     "attachmentName": "codefile",
                     "attachmentType": "text/plain"
                 },
+                "stemCells": [
+                    {
+                        "count": 1,
+                        "memory": "256 MB"
+                    }
+                ],
                 "requireMain": true
             }
         ],
