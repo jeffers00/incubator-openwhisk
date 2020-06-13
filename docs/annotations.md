@@ -61,10 +61,7 @@ The annotations are _not_ checked. So while it is conceivable to use the annotat
 
 The following annotations on an action are available.
 
-* `provide-api-key`: This annotation may be attached to actions which require an API key, for example to make REST API calls to the OpenWhisk host.
-The absence of this annotation, or its presence with a value that is not _falsy_ (i.e., a value that is different from zero, null, false, and the empty string)
-will cause an API key to be present in the [action execution context](./actions.md#accessing-action-metadata-within-the-action-body). This annotation is added
-to newly created actions, if not already specified, with a default false value.
+* `provide-api-key`: This annotation may be attached to actions which require an API key, for example to make REST API calls to the OpenWhisk host. For newly created actions, if not specified, it defaults to a false value. For existing actions, the absence of this annotation, or its presence with a value that is not _falsy_ (i.e., a value that is different from zero, null, false, and the empty string) will cause an API key to be present in the [action execution context](./actions.md#accessing-action-metadata-within-the-action-body).
 
 # Annotations specific to web actions
 
@@ -93,7 +90,7 @@ Additionally for sequence related activations, the system will generate the foll
 
 Lastly, and in order to provide you with some performance transparency, activations also record:
 
-* `waitTime`: the time spent waiting in the internal OpenWhisk system. This is roughly the time spent between the controller receiving the activation request and when the invoker provisioned a container for the action. This value is currently only present for non-sequence related activations. For sequences, this information can be derived from the `topmost` sequence activation record.
+* `waitTime`: the time spent waiting in the internal OpenWhisk system. This is roughly the time spent between the controller receiving the activation request and when the invoker provisioned a container for the action.
 * `initTime`: the time spent initializing the function. If this value is present, the action required initialization and represents a cold start. A warm activation will skip initialization, and in this case, the annotation is not generated.
 
 An example of these annotations as they would appear in an activation record is shown below.

@@ -24,9 +24,9 @@ import java.time.format.DateTimeFormatter
 import akka.event.Logging._
 import akka.event.LoggingAdapter
 import kamon.Kamon
-import kamon.metric.{MeasurementUnit, Counter => KCounter, Histogram => KHistogram, Gauge => KGauge}
+import kamon.metric.{MeasurementUnit, Counter => KCounter, Gauge => KGauge, Histogram => KHistogram}
 import kamon.statsd.{MetricKeyGenerator, SimpleMetricKeyGenerator}
-import kamon.system.SystemMetrics
+import kamon.tag.TagSet
 import org.apache.openwhisk.core.entity.ControllerInstanceId
 
 trait Logging {
@@ -83,7 +83,7 @@ trait Logging {
    * @param from Reference, where the method was called from.
    * @param message Message to write to the log if not empty
    */
-  protected[common] def emit(loglevel: LogLevel, id: TransactionId, from: AnyRef, message: => String)
+  protected[common] def emit(loglevel: LogLevel, id: TransactionId, from: AnyRef, message: => String): Unit
 }
 
 /**
@@ -100,7 +100,10 @@ class AkkaLogging(loggingAdapter: LoggingAdapter) extends Logging {
     }
   }
 
-  protected def format(id: TransactionId, name: String, logmsg: String) = s"[$id] [$name] $logmsg"
+  protected def format(id: TransactionId, name: String, logmsg: String) = {
+    val currentId = if (id.hasParent) id else ""
+    s"[${id.root}] [$currentId] [$name] $logmsg"
+  }
 }
 
 /**
@@ -124,8 +127,9 @@ class PrintStreamLogging(outputStream: PrintStream = Console.out) extends Loggin
       case msg if msg.nonEmpty =>
         msg.split('\n').map(_.trim).mkString(" ")
     }
+    val currentId = if (id.hasParent) id else ""
 
-    val parts = Seq(s"[$time]", s"[$level]", s"[$id]") ++ Seq(s"[$name]") ++ logMessage
+    val parts = Seq(s"[$time]", s"[$level]", s"[${id.root}]", s"[$currentId]") ++ Seq(s"[$name]") ++ logMessage
     outputStream.println(parts.mkString(" "))
   }
 }
@@ -239,31 +243,25 @@ case class LogMarkerToken(
 
   private def createCounter() = {
     if (TransactionId.metricsKamonTags) {
-      Kamon
-        .counter(createName(toString, "counter"))
-        .refine(tags)
+      Kamon.counter(createName(toString, "counter")).withTags(TagSet.from(tags))
     } else {
-      Kamon.counter(createName(toStringWithSubAction, "counter"))
+      Kamon.counter(createName(toStringWithSubAction, "counter")).withoutTags()
     }
   }
 
   private def createHistogram() = {
     if (TransactionId.metricsKamonTags) {
-      Kamon
-        .histogram(createName(toString, "histogram"), measurementUnit)
-        .refine(tags)
+      Kamon.histogram(createName(toString, "histogram"), measurementUnit).withTags(TagSet.from(tags))
     } else {
-      Kamon.histogram(createName(toStringWithSubAction, "histogram"), measurementUnit)
+      Kamon.histogram(createName(toStringWithSubAction, "histogram"), measurementUnit).withoutTags()
     }
   }
 
   private def createGauge() = {
     if (TransactionId.metricsKamonTags) {
-      Kamon
-        .gauge(createName(toString, "gauge"), measurementUnit)
-        .refine(tags)
+      Kamon.gauge(createName(toString, "gauge"), measurementUnit).withTags(TagSet.from(tags))
     } else {
-      Kamon.gauge(createName(toStringWithSubAction, "gauge"), measurementUnit)
+      Kamon.gauge(createName(toStringWithSubAction, "gauge"), measurementUnit).withoutTags()
     }
   }
 
@@ -296,10 +294,6 @@ object LogMarkerToken {
 }
 
 object MetricEmitter {
-  if (TransactionId.metricsKamon) {
-    SystemMetrics.startCollecting()
-  }
-
   def emitCounterMetric(token: LogMarkerToken, times: Long = 1): Unit = {
     if (TransactionId.metricsKamon) {
       token.counter.increment(times)
@@ -314,7 +308,7 @@ object MetricEmitter {
 
   def emitGaugeMetric(token: LogMarkerToken, value: Long): Unit = {
     if (TransactionId.metricsKamon) {
-      token.gauge.set(value)
+      token.gauge.update(value)
     }
   }
 }
@@ -327,7 +321,7 @@ object MetricEmitter {
  */
 class WhiskStatsDMetricKeyGenerator(config: com.typesafe.config.Config) extends MetricKeyGenerator {
   val simpleGen = new SimpleMetricKeyGenerator(config)
-  override def generateKey(name: String, tags: Map[String, String]): String = {
+  override def generateKey(name: String, tags: TagSet): String = {
     val key = simpleGen.generateKey(name, tags)
     if (key.contains(".counter_")) key.replace(".counter_", ".counter.")
     else if (key.contains(".histogram_")) key.replace(".histogram_", ".histogram.")
@@ -350,6 +344,27 @@ object LoggingMarkers {
   private val kafka = "kafka"
   private val loadbalancer = "loadbalancer"
   private val containerClient = "containerClient"
+  private val containerPool = "containerPool"
+
+  /*
+   * The following markers are used to emit log messages as well as metrics. Add all LogMarkerTokens below to
+   * have a reference list of all metrics. The list below contains LogMarkerToken singletons (val) as well as
+   * LogMarkerToken creation functions (def). The LogMarkerToken creation functions allow to include variable
+   * information in metrics, such as the controller / invoker id or commands executed by a container factory.
+   *
+   * When using LogMarkerTokens for emitting metrics, you should use the convenience functions only once to
+   * create LogMarkerToken singletons instead of creating LogMarkerToken instances over and over again for each
+   * metric emit.
+   *
+   * Example:
+   * val MY_COUNTER_GREEN = LoggingMarkers.MY_COUNTER(GreenCounter)
+   * ...
+   * MetricEmitter.emitCounterMetric(MY_COUNTER_GREEN)
+   *
+   * instead of
+   *
+   * MetricEmitter.emitCounterMetric(LoggingMarkers.MY_COUNTER(GreenCounter))
+   */
 
   /*
    * Controller related markers
@@ -414,6 +429,29 @@ object LoggingMarkers {
       LogMarkerToken(loadbalancer + controllerInstance.asString, s"memory${actionType}Inflight", counter)(
         MeasurementUnit.none)
 
+  // Counter metrics for completion acks in load balancer
+  sealed abstract class CompletionAckType(val name: String) { def asString: String = name }
+  case object RegularCompletionAck extends CompletionAckType("regular")
+  case object ForcedCompletionAck extends CompletionAckType("forced")
+  case object HealthcheckCompletionAck extends CompletionAckType("healthcheck")
+  case object RegularAfterForcedCompletionAck extends CompletionAckType("regularAfterForced")
+  case object ForcedAfterRegularCompletionAck extends CompletionAckType("forcedAfterRegular")
+
+  // Convenience function to create log marker tokens used for emitting counter metrics related to completion acks.
+  def LOADBALANCER_COMPLETION_ACK(controllerInstance: ControllerInstanceId, completionAckType: CompletionAckType) =
+    if (TransactionId.metricsKamonTags)
+      LogMarkerToken(
+        loadbalancer,
+        "completionAck",
+        counter,
+        None,
+        Map("controller_id" -> controllerInstance.asString, "type" -> completionAckType.asString))(MeasurementUnit.none)
+    else
+      LogMarkerToken(
+        loadbalancer + controllerInstance.asString,
+        "completionAck_" + completionAckType.asString,
+        counter)(MeasurementUnit.none)
+
   // Time that is needed to execute the action
   val INVOKER_ACTIVATION_RUN =
     LogMarkerToken(invoker, "activationRun", start)(MeasurementUnit.time.milliseconds)
@@ -434,17 +472,57 @@ object LoggingMarkers {
     LogMarkerToken(invoker, "docker", timeout, Some(cmd), Map("cmd" -> cmd))(MeasurementUnit.none)
   def INVOKER_RUNC_CMD(cmd: String) =
     LogMarkerToken(invoker, "runc", start, Some(cmd), Map("cmd" -> cmd))(MeasurementUnit.time.milliseconds)
-  def INVOKER_KUBECTL_CMD(cmd: String) =
-    LogMarkerToken(invoker, "kubectl", start, Some(cmd), Map("cmd" -> cmd))(MeasurementUnit.none)
+  def INVOKER_KUBEAPI_CMD(cmd: String) =
+    LogMarkerToken(invoker, "kubeapi", start, Some(cmd), Map("cmd" -> cmd))(MeasurementUnit.none)
   def INVOKER_MESOS_CMD(cmd: String) =
     LogMarkerToken(invoker, "mesos", start, Some(cmd), Map("cmd" -> cmd))(MeasurementUnit.time.milliseconds)
   def INVOKER_MESOS_CMD_TIMEOUT(cmd: String) =
     LogMarkerToken(invoker, "mesos", timeout, Some(cmd), Map("cmd" -> cmd))(MeasurementUnit.none)
-  def INVOKER_CONTAINER_START(containerState: String) =
-    LogMarkerToken(invoker, "containerStart", counter, Some(containerState), Map("containerState" -> containerState))(
+  def INVOKER_CONTAINER_START(containerState: String, invocationNamespace: String, namespace: String, action: String) =
+    LogMarkerToken(
+      invoker,
+      "containerStart",
+      counter,
+      Some(containerState),
+      Map(
+        "containerState" -> containerState,
+        "initiator" -> invocationNamespace,
+        "namespace" -> namespace,
+        "action" -> action))(MeasurementUnit.none)
+  val INVOKER_CONTAINER_HEALTH = LogMarkerToken(invoker, "containerHealth", start)(MeasurementUnit.time.milliseconds)
+  val INVOKER_CONTAINER_HEALTH_FAILED_WARM =
+    LogMarkerToken(invoker, "containerHealthFailed", counter, Some("warm"), Map("containerState" -> "warm"))(
+      MeasurementUnit.none)
+  val INVOKER_CONTAINER_HEALTH_FAILED_PREWARM =
+    LogMarkerToken(invoker, "containerHealthFailed", counter, Some("prewarm"), Map("containerState" -> "prewarm"))(
       MeasurementUnit.none)
   val CONTAINER_CLIENT_RETRIES =
     LogMarkerToken(containerClient, "retries", counter)(MeasurementUnit.none)
+
+  val CONTAINER_POOL_RESCHEDULED_ACTIVATION =
+    LogMarkerToken(containerPool, "rescheduledActivation", counter)(MeasurementUnit.none)
+  val CONTAINER_POOL_RUNBUFFER_COUNT =
+    LogMarkerToken(containerPool, "runBufferCount", counter)(MeasurementUnit.none)
+  val CONTAINER_POOL_RUNBUFFER_SIZE =
+    LogMarkerToken(containerPool, "runBufferSize", counter)(MeasurementUnit.information.megabytes)
+  val CONTAINER_POOL_ACTIVE_COUNT =
+    LogMarkerToken(containerPool, "activeCount", counter)(MeasurementUnit.none)
+  val CONTAINER_POOL_ACTIVE_SIZE =
+    LogMarkerToken(containerPool, "activeSize", counter)(MeasurementUnit.information.megabytes)
+  val CONTAINER_POOL_PREWARM_COUNT =
+    LogMarkerToken(containerPool, "prewarmCount", counter)(MeasurementUnit.none)
+  val CONTAINER_POOL_PREWARM_SIZE =
+    LogMarkerToken(containerPool, "prewarmSize", counter)(MeasurementUnit.information.megabytes)
+  val CONTAINER_POOL_IDLES_COUNT =
+    LogMarkerToken(containerPool, "idlesCount", counter)(MeasurementUnit.none)
+  def CONTAINER_POOL_PREWARM_COLDSTART(memory: String, kind: String) =
+    LogMarkerToken(containerPool, "prewarmColdstart", counter, None, Map("memory" -> memory, "kind" -> kind))(
+      MeasurementUnit.none)
+  def CONTAINER_POOL_PREWARM_EXPIRED(memory: String, kind: String) =
+    LogMarkerToken(containerPool, "prewarmExpired", counter, None, Map("memory" -> memory, "kind" -> kind))(
+      MeasurementUnit.none)
+  val CONTAINER_POOL_IDLES_SIZE =
+    LogMarkerToken(containerPool, "idlesSize", counter)(MeasurementUnit.information.megabytes)
 
   val INVOKER_TOTALMEM_BLACKBOX = LogMarkerToken(loadbalancer, "totalCapacityBlackBox", counter)(MeasurementUnit.none)
   val INVOKER_TOTALMEM_MANAGED = LogMarkerToken(loadbalancer, "totalCapacityManaged", counter)(MeasurementUnit.none)

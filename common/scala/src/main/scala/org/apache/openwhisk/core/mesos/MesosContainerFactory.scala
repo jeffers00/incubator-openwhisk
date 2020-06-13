@@ -30,7 +30,8 @@ import com.adobe.api.platform.runtime.mesos.Teardown
 import com.adobe.api.platform.runtime.mesos.UNLIKE
 import java.time.Instant
 
-import pureconfig.loadConfigOrThrow
+import pureconfig._
+import pureconfig.generic.auto._
 
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
@@ -92,6 +93,8 @@ class MesosContainerFactory(config: WhiskConfig,
                               loadConfigOrThrow[ContainerArgsConfig](ConfigKeys.containerArgs),
                             runtimesRegistryConfig: RuntimesRegistryConfig =
                               loadConfigOrThrow[RuntimesRegistryConfig](ConfigKeys.runtimesRegistry),
+                            userImagesRegistryConfig: RuntimesRegistryConfig =
+                              loadConfigOrThrow[RuntimesRegistryConfig](ConfigKeys.userImagesRegistry),
                             mesosConfig: MesosConfig = loadConfigOrThrow[MesosConfig](ConfigKeys.mesos),
                             clientFactory: (ActorSystem, MesosConfig) => ActorRef = MesosContainerFactory.createClient,
                             taskIdGenerator: () => String = MesosContainerFactory.taskIdGenerator _)
@@ -102,6 +105,9 @@ class MesosContainerFactory(config: WhiskConfig,
 
   /** Inits Mesos framework. */
   val mesosClientActor = clientFactory(as, mesosConfig)
+
+  @volatile
+  private var closed: Boolean = false
 
   subscribe()
 
@@ -115,7 +121,7 @@ class MesosContainerFactory(config: WhiskConfig,
       .recoverWith {
         case e =>
           logging.error(this, s"subscribe failed... $e}")
-          subscribe()
+          if (closed) Future.successful(()) else subscribe()
       }
   }
 
@@ -126,11 +132,8 @@ class MesosContainerFactory(config: WhiskConfig,
                                memory: ByteSize,
                                cpuShares: Int)(implicit config: WhiskConfig, logging: Logging): Future[Container] = {
     implicit val transid = tid
-    val image = if (userProvidedImage) {
-      actionImage.publicImageName
-    } else {
-      actionImage.localImageName(runtimesRegistryConfig.url)
-    }
+    val image = actionImage.resolveImageName(Some(
+      ContainerFactory.resolveRegistryConfig(userProvidedImage, runtimesRegistryConfig, userImagesRegistryConfig).url))
     val constraintStrings = if (userProvidedImage) {
       mesosConfig.blackboxConstraints
     } else {
@@ -142,11 +145,11 @@ class MesosContainerFactory(config: WhiskConfig,
       mesosConfig,
       taskIdGenerator,
       tid,
-      image = image,
+      image,
       userProvidedImage = userProvidedImage,
       memory = memory,
       cpuShares = cpuShares,
-      environment = Map("__OW_API_HOST" -> config.wskApiHost),
+      environment = Map("__OW_API_HOST" -> config.wskApiHost) ++ containerArgs.extraEnvVarMap,
       network = containerArgs.network,
       dnsServers = containerArgs.dnsServers,
       name = Some(name),
@@ -175,7 +178,7 @@ class MesosContainerFactory(config: WhiskConfig,
       }
     })
 
-  override def init(): Unit = Unit
+  override def init(): Unit = ()
 
   /** Cleanups any remaining Containers; should block until complete; should ONLY be run at shutdown. */
   override def cleanup(): Unit = {
@@ -187,6 +190,10 @@ class MesosContainerFactory(config: WhiskConfig,
         case t: Throwable =>
           logging.error(this, s"Mesos framework teardown failed : $t}")
       }
+  }
+
+  def close(): Unit = {
+    closed = true
   }
 }
 object MesosContainerFactory {

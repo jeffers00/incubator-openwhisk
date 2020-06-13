@@ -20,22 +20,39 @@ package org.apache.openwhisk.core.containerpool
 import akka.actor.ActorSystem
 import org.apache.openwhisk.common.{Logging, TransactionId}
 import org.apache.openwhisk.core.WhiskConfig
-import org.apache.openwhisk.core.entity.{ByteSize, ExecManifest, InvokerInstanceId}
+import org.apache.openwhisk.core.entity.{ByteSize, ExecManifest, ExecutableWhiskAction, InvokerInstanceId}
 import org.apache.openwhisk.spi.Spi
 
 import scala.concurrent.Future
+import scala.concurrent.duration.FiniteDuration
 import scala.math.max
 
 case class ContainerArgsConfig(network: String,
                                dnsServers: Seq[String] = Seq.empty,
                                dnsSearch: Seq[String] = Seq.empty,
                                dnsOptions: Seq[String] = Seq.empty,
-                               extraArgs: Map[String, Set[String]] = Map.empty)
+                               extraEnvVars: Seq[String] = Seq.empty,
+                               extraArgs: Map[String, Set[String]] = Map.empty) {
 
-case class ContainerPoolConfig(userMemory: ByteSize, concurrentPeekFactor: Double, akkaClient: Boolean) {
+  val extraEnvVarMap: Map[String, String] =
+    extraEnvVars.flatMap {
+      _.split("=", 2) match {
+        case Array(key)        => Some(key -> "")
+        case Array(key, value) => Some(key -> value)
+        case _                 => None
+      }
+    }.toMap
+}
+
+case class ContainerPoolConfig(userMemory: ByteSize,
+                               concurrentPeekFactor: Double,
+                               akkaClient: Boolean,
+                               prewarmExpirationCheckInterval: FiniteDuration) {
   require(
     concurrentPeekFactor > 0 && concurrentPeekFactor <= 1.0,
     s"concurrentPeekFactor must be > 0 and <= 1.0; was $concurrentPeekFactor")
+
+  require(prewarmExpirationCheckInterval.toSeconds > 0, "prewarmExpirationCheckInterval must be > 0")
 
   /**
    * The shareFactor indicates the number of containers that would share a single core, on average.
@@ -78,6 +95,17 @@ trait ContainerFactory {
    * - It is desired that the container supports and enforces the specified memory limit and CPU shares.
    *   In particular, action memory limits rely on the underlying container technology.
    */
+  def createContainer(
+    tid: TransactionId,
+    name: String,
+    actionImage: ExecManifest.ImageName,
+    userProvidedImage: Boolean,
+    memory: ByteSize,
+    cpuShares: Int,
+    action: Option[ExecutableWhiskAction])(implicit config: WhiskConfig, logging: Logging): Future[Container] = {
+    createContainer(tid, name, actionImage, userProvidedImage, memory, cpuShares)
+  }
+
   def createContainer(tid: TransactionId,
                       name: String,
                       actionImage: ExecManifest.ImageName,
@@ -100,6 +128,12 @@ object ContainerFactory {
   /** include the instance name, if specified and strip invalid chars before attempting to use them in the container name */
   def containerNamePrefix(instanceId: InvokerInstanceId): String =
     s"wsk${instanceId.uniqueName.getOrElse("")}${instanceId.toInt}".filter(isAllowed)
+
+  def resolveRegistryConfig(userProvidedImage: Boolean,
+                            runtimesRegistryConfig: RuntimesRegistryConfig,
+                            userImagesRegistryConfig: RuntimesRegistryConfig): RuntimesRegistryConfig = {
+    if (userProvidedImage) userImagesRegistryConfig else runtimesRegistryConfig
+  }
 }
 
 /**

@@ -37,6 +37,7 @@ import org.apache.openwhisk.core.entity.WhiskRule
 import org.apache.openwhisk.core.entity.WhiskTrigger
 import org.apache.openwhisk.core.entity.types.EntityStore
 import pureconfig._
+import pureconfig.generic.auto._
 
 /**
  * A collection encapsulates the name of a collection and implicit rights when subject
@@ -122,6 +123,7 @@ protected[core] object Collection {
   protected[core] val PACKAGES = WhiskPackage.collectionName
   protected[core] val ACTIVATIONS = WhiskActivation.collectionName
   protected[core] val NAMESPACES = "namespaces"
+  protected[core] val LIMITS = "limits"
 
   private val collections = scala.collection.mutable.Map[String, Collection]()
   private def register(c: Collection) = collections += c.path -> c
@@ -154,6 +156,13 @@ protected[core] object Collection {
       }
 
       protected override val allowedEntityRights: Set[Privilege] = Set(Privilege.READ)
+    })
+
+    register(new Collection(LIMITS) {
+      protected[core] override def determineRight(op: HttpMethod,
+                                                  resource: Option[String])(implicit transid: TransactionId) = {
+        if (op == GET) Privilege.READ else Privilege.REJECT
+      }
     })
   }
 }

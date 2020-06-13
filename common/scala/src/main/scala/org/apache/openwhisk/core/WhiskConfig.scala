@@ -67,7 +67,6 @@ class WhiskConfig(requiredProperties: Map[String, String],
     .getOrElse("")
 
   val controllerBlackboxFraction = this.getAsDouble(WhiskConfig.controllerBlackboxFraction, 0.10)
-  val controllerInstances = this(WhiskConfig.controllerInstances)
 
   val edgeHost = this(WhiskConfig.edgeHostName) + ":" + this(WhiskConfig.edgeHostApiPort)
   val kafkaHosts = this(WhiskConfig.kafkaHostList)
@@ -169,7 +168,6 @@ object WhiskConfig {
   val mainDockerEndpoint = "main.docker.endpoint"
 
   val controllerBlackboxFraction = "controller.blackboxFraction"
-  val controllerInstances = "controller.instances"
   val dbInstances = "db.instances"
 
   val kafkaHostList = "kafka.hosts"
@@ -231,6 +229,7 @@ object ConfigKeys {
   val containerFactory = "whisk.container-factory"
   val containerArgs = s"$containerFactory.container-args"
   val runtimesRegistry = s"$containerFactory.runtimes-registry"
+  val userImagesRegistry = s"$containerFactory.user-images-registry"
   val containerPool = "whisk.container-pool"
   val blacklist = "whisk.blacklist"
 
@@ -248,6 +247,7 @@ object ConfigKeys {
 
   val containerProxy = "whisk.container-proxy"
   val containerProxyTimeouts = s"$containerProxy.timeouts"
+  val containerProxyHealth = s"$containerProxy.action-health-check"
 
   val s3 = "whisk.s3"
   val query = "whisk.query-limit"
@@ -257,6 +257,7 @@ object ConfigKeys {
   val controllerActivation = s"$controller.activation"
 
   val activationStore = "whisk.activation-store"
+  val elasticSearchActivationStore = s"$activationStore.elasticsearch"
   val activationStoreWithFileStorage = s"$activationStore.with-file-storage"
 
   val metrics = "whisk.metrics"
@@ -264,4 +265,11 @@ object ConfigKeys {
 
   val whiskConfig = "whisk.config"
   val swaggerUi = "whisk.swagger-ui"
+
+  val disableStoreResult = s"$activation.disable-store-result"
+  val unstoredLogsEnabled = s"$activation.unstored-logs-enabled"
+
+  val apacheClientConfig = "whisk.apache-client"
+
+  val parameterStorage = "whisk.parameter-storage"
 }

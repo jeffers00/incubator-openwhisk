@@ -539,6 +539,9 @@ class WskSequenceTests extends TestHelpers with WskTestHelpers with StreamLoggin
         totalWait = allowedActionDuration) { componentActivation =>
         componentActivation.cause shouldBe defined
         componentActivation.cause.get shouldBe (activation.activationId)
+        // check waitTime
+        val waitTime = componentActivation.getAnnotationValue("waitTime")
+        waitTime shouldBe defined
         // check causedBy
         val causedBy = componentActivation.getAnnotationValue("causedBy")
         causedBy shouldBe defined
@@ -558,7 +561,7 @@ class WskSequenceTests extends TestHelpers with WskTestHelpers with StreamLoggin
   }
 
   /** checks that the logs of the idx-th atomic action from a sequence contains logsStr */
-  private def checkLogsAtomicAction(atomicActionIdx: Int, run: RunResult, regex: Regex) {
+  private def checkLogsAtomicAction(atomicActionIdx: Int, run: RunResult, regex: Regex): Unit = {
     withActivation(wsk.activation, run, totalWait = 2 * allowedActionDuration) { activation =>
       checkSequenceLogsAndAnnotations(activation, 1)
       val componentId = activation.logs.get(atomicActionIdx)

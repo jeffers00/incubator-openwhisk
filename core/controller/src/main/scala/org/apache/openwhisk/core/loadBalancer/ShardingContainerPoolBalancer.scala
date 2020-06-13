@@ -24,11 +24,12 @@ import java.util.concurrent.ThreadLocalRandom
 import akka.actor.{Actor, ActorSystem, Cancellable, Props}
 import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, Member, MemberStatus}
-import akka.management.AkkaManagement
+import akka.management.scaladsl.AkkaManagement
 import akka.management.cluster.bootstrap.ClusterBootstrap
 import akka.stream.ActorMaterializer
 import org.apache.kafka.clients.producer.RecordMetadata
 import pureconfig._
+import pureconfig.generic.auto._
 import org.apache.openwhisk.common._
 import org.apache.openwhisk.core.WhiskConfig._
 import org.apache.openwhisk.core.connector._
@@ -41,6 +42,7 @@ import org.apache.openwhisk.spi.SpiLoader
 
 import scala.annotation.tailrec
 import scala.concurrent.Future
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * A loadbalancer that schedules workload based on a hashing-algorithm.
@@ -325,7 +327,7 @@ class ShardingContainerPoolBalancer(
   override protected def releaseInvoker(invoker: InvokerInstanceId, entry: ActivationEntry) = {
     schedulingState.invokerSlots
       .lift(invoker.toInt)
-      .foreach(_.releaseConcurrent(entry.fullyQualifiedEntityName, entry.maxConcurrent, entry.memory.toMB.toInt))
+      .foreach(_.releaseConcurrent(entry.fullyQualifiedEntityName, entry.maxConcurrent, entry.memoryLimit.toMB.toInt))
   }
 }
 
@@ -593,9 +595,13 @@ case class ClusterConfig(useClusterBootstrap: Boolean)
  * Configuration for the sharding container pool balancer.
  *
  * @param blackboxFraction the fraction of all invokers to use exclusively for blackboxes
- * @param timeoutFactor factor to influence the timeout period for forced active acks (time-limit.std * timeoutFactor + 1m)
+ * @param timeoutFactor factor to influence the timeout period for forced active acks (time-limit.std * timeoutFactor + timeoutAddon)
+ * @param timeoutAddon extra time to influence the timeout period for forced active acks (time-limit.std * timeoutFactor + timeoutAddon)
  */
-case class ShardingContainerPoolBalancerConfig(managedFraction: Double, blackboxFraction: Double, timeoutFactor: Int)
+case class ShardingContainerPoolBalancerConfig(managedFraction: Double,
+                                               blackboxFraction: Double,
+                                               timeoutFactor: Int,
+                                               timeoutAddon: FiniteDuration)
 
 /**
  * State kept for each activation slot until completion.
@@ -603,13 +609,21 @@ case class ShardingContainerPoolBalancerConfig(managedFraction: Double, blackbox
  * @param id id of the activation
  * @param namespaceId namespace that invoked the action
  * @param invokerName invoker the action is scheduled to
+ * @param memoryLimit memory limit of the invoked action
+ * @param timeLimit time limit of the invoked action
+ * @param maxConcurrent concurrency limit of the invoked action
+ * @param fullyQualifiedEntityName fully qualified name of the invoked action
  * @param timeoutHandler times out completion of this activation, should be canceled on good paths
+ * @param isBlackbox true if the invoked action is a blackbox action, otherwise false (managed action)
+ * @param isBlocking true if the action is invoked in a blocking fashion, i.e. "somebody" waits for the result
  */
 case class ActivationEntry(id: ActivationId,
                            namespaceId: UUID,
                            invokerName: InvokerInstanceId,
-                           memory: ByteSize,
+                           memoryLimit: ByteSize,
+                           timeLimit: FiniteDuration,
                            maxConcurrent: Int,
                            fullyQualifiedEntityName: FullyQualifiedEntityName,
                            timeoutHandler: Cancellable,
-                           isBlackbox: Boolean)
+                           isBlackbox: Boolean,
+                           isBlocking: Boolean)
